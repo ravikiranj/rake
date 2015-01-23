@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * Rake
@@ -38,7 +39,6 @@ public class Rake
     private static final String STOP_WORDS_FILEPATH = DATASETS_DIR + "/stopwords.txt";
 
     private static List<String> STOP_WORDS;
-    private static Joiner joiner = Joiner.on("|").skipNulls();
     private static String STOP_WORD_REGEX;
 
     static {
@@ -87,6 +87,26 @@ public class Rake
         return words;
     }
 
+    public List<String> generateCandidateKeywords(List<String> sentences)
+    {
+        List<String> phraseList = Lists.newArrayList();
+        for (String sentence : sentences)
+        {
+            sentence = sentence.trim();
+            String tempStopWordRegexSplit = sentence.replaceAll(STOP_WORD_REGEX, "|");
+            String[] phrases = tempStopWordRegexSplit.split("\\|");
+            for (int i = 0; i < phrases.length; i++)
+            {
+                String tempPhrase = phrases[i].trim().toLowerCase();
+                if (StringUtils.isNotBlank(tempPhrase))
+                {
+                    phraseList.add(tempPhrase);
+                }
+            }
+        }
+        return phraseList;
+    }
+
     public boolean isNumber(String str)
     {
         try
@@ -111,26 +131,26 @@ public class Rake
     {
         for (int i = 0; i < arr.length; i++)
         {
-            System.out.println(arr[i]);
+            System.out.println(i + " = " + arr[i]);
         }
 
     }
 
     public <T> void printList(List<T> elemList)
     {
+        int i = 0;
         for (T elem : elemList)
         {
-            System.out.println(elem);
+            System.out.println(i++ + " = " + elem);
         }
     }
 
     public static void main(String[] args)
     {
         Rake rake = Rake.getInstance();
-        for (String s : rake.splitSentences("asdasd;. as dasd! asdasd ;;,, ad,asd,asd"))
-        {
-            rake.printList(rake.separateWords(s, 3));
-        }
+        String sentence = "This is a great restaurant mom, i would love to go back again";
+        List<String> sentences = rake.splitSentences(sentence);
+        rake.printList(rake.generateCandidateKeywords(sentences));
     }
 
 }
