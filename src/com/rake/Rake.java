@@ -4,12 +4,14 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Objects;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
+import org.apache.commons.csv.CSVRecord;
 import org.apache.commons.lang3.StringUtils;
+import weka.core.tokenizers.NGramTokenizer;
 
-import java.io.BufferedReader;
-import java.io.FileNotFoundException;
-import java.io.FileReader;
-import java.io.IOException;
+import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /**
@@ -74,7 +76,7 @@ public class Rake
 
     public List<String> separateWords(String sentence, int minLength)
     {
-        String[] candidates = sentence.split("[^a-zA-Z0-9_+-/]");
+        String[] candidates = sentence.split("[^a-zA-Z0-9]");
         List<String> words = Lists.newArrayList();
         for (int i = 0; i < candidates.length; i++)
         {
@@ -98,13 +100,36 @@ public class Rake
             for (int i = 0; i < phrases.length; i++)
             {
                 String tempPhrase = phrases[i].trim().toLowerCase();
-                if (StringUtils.isNotBlank(tempPhrase))
+                // Additional fix to exclude stop words from candidate keywords
+                if (StringUtils.isNotBlank(tempPhrase) && _isDevoidOfStopWords(tempPhrase) && _isValidWord(tempPhrase))
                 {
                     phraseList.add(tempPhrase);
                 }
             }
         }
         return phraseList;
+    }
+
+    private boolean _isDevoidOfStopWords(String tempPhrase)
+    {
+        if (STOP_WORDS.contains(tempPhrase))
+        {
+            return false;
+        }
+        String [] words = tempPhrase.split(" ");
+        for (int i = 0; i < words.length; i++)
+        {
+            if (STOP_WORDS.contains(words[i]))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean _isValidWord(String tempPhrase)
+    {
+        return tempPhrase.matches("^[A-Za-z0-9 ]+$");
     }
 
     public Map<String, Double> getWordScores(List<String> phraseList)
@@ -163,6 +188,7 @@ public class Rake
     public List<CandidateKeywordScore> getCandidateKeywordScores(List<String> phraseList, Map<String, Double> wordScoresMap)
     {
         List<CandidateKeywordScore> candidateKeywordScores = Lists.newArrayList();
+        double totalScore = 0.0;
         for (String phrase : phraseList)
         {
             List<String> wordList = separateWords(phrase, 0);
@@ -172,9 +198,21 @@ public class Rake
                 candidateScore += wordScoresMap.get(word);
             }
             candidateKeywordScores.add(new CandidateKeywordScore(phrase, candidateScore));
+            totalScore += candidateScore;
         }
+        _normalizeCandidateKeywordScores(candidateKeywordScores, totalScore);
         Collections.sort(candidateKeywordScores, Collections.reverseOrder(new CandidateKeywordScoreSorter()));
         return candidateKeywordScores;
+    }
+
+    private void _normalizeCandidateKeywordScores(List<CandidateKeywordScore> candidateKeywordScores, double totalScore)
+    {
+        for(CandidateKeywordScore candidateKeywordScore : candidateKeywordScores)
+        {
+            double currentScore = candidateKeywordScore.getScore();
+            double normalizedScore = currentScore / totalScore;
+            candidateKeywordScore.setScore(normalizedScore);
+        }
     }
 
     public boolean isNumber(String str)
@@ -195,36 +233,82 @@ public class Rake
         return true;
     }
 
-    public <T> void printArray(T[] arr)
+    public List<CandidateKeywordScore> getKeywords(List<String> reviews)
     {
-        for (int i = 0; i < arr.length; i++)
+        Map<String, CandidateKeywordScore> scoreMap = Maps.newHashMap();
+        for (String review : reviews)
         {
-            System.out.println(i + " = " + arr[i]);
+            List<String> sentenceList = splitSentences(review);
+            List<String> phraseList = generateCandidateKeywords(sentenceList);
+            Map<String, Double> wordScoresMap = getWordScores(phraseList);
+            List<CandidateKeywordScore> candidateKeywordScores = getCandidateKeywordScores(phraseList, wordScoresMap);
+            for (CandidateKeywordScore score : candidateKeywordScores)
+            {
+                String word = score.getWord();
+                if (scoreMap.containsKey(word))
+                {
+                    CandidateKeywordScore existingScore = scoreMap.get(word);
+                    existingScore.addToScore(score.getScore());
+                    scoreMap.put(word, existingScore);
+                }
+                else
+                {
+                    scoreMap.put(word, score);
+                }
+            }
         }
-
-    }
-
-    public <T> void printList(List<T> elemList)
-    {
-        int i = 0;
-        for (T elem : elemList)
-        {
-            System.out.println(i++ + " = " + elem);
-        }
+        List<CandidateKeywordScore> finalScores = new ArrayList<CandidateKeywordScore>(scoreMap.values());
+        Collections.sort(finalScores, Collections.reverseOrder(new CandidateKeywordScoreSorter()));
+        return finalScores;
     }
 
     public static void main(String[] args)
     {
         Rake rake = Rake.getInstance();
-        String text = "Rangoon Ruby is my new Palo Alto favorite restaurant. I have eaten there three times during last two weeks and have been satisfied each time. See how they toss the tea leaf salad in the table, enjoy tasty coconut rice and sesame chicken, for example. Every time I was served by Ashley, who is top notch professional. She has the eye for details and the warmest smile. The only small minus is that it gets quite loud when they are full. However, for 2 persons they found a table very fast. Reservation is recommended, restaurant seems to be full both on Sunday afternoons and week evenings. If you are looking for a quiet meal, they also do home deliveries...";
-        List<String> sentenceList = rake.splitSentences(text);
-        List<String> phraseList = rake.generateCandidateKeywords(sentenceList);
-        Map<String, Double> wordScoresMap = rake.getWordScores(phraseList);
-        List<CandidateKeywordScore> candidateKeywordScores = rake.getCandidateKeywordScores(phraseList, wordScoresMap);
-        System.out.println(candidateKeywordScores);
+        List<String> reviews = rake.getTestReviews();
+        List<CandidateKeywordScore> finalScores = rake.getKeywords(reviews);
+        rake._printList(finalScores);
     }
 
-    private class CandidateKeywordScore
+    private void _printList(List<CandidateKeywordScore> elems)
+    {
+        for (CandidateKeywordScore elem : elems)
+        {
+            System.out.println(elem);
+        }
+    }
+
+    private void testTokenzier()
+    {
+        String text="Oren's is a popular lunch place, noisy and bustling. It seems to attract an eclectic clientele--we heard at least six languages spoken within 10 feet of our table.  The Sampler gives a generous taste of 6 preselected dips to go with the fresh pita; we also ordered several side dishes to share. Israelis praise the authenticity of the food. My very selective husband enjoyed the hummus, saying it is far better than most American versions. We will return to try the more substantial dinner offerings.";
+        NGramTokenizer nGramTokenizer = new NGramTokenizer();
+        nGramTokenizer.setNGramMinSize(1);
+        nGramTokenizer.setNGramMaxSize(2);
+        nGramTokenizer.setDelimiters("[^a-zA-Z0-9']");
+        nGramTokenizer.tokenize(text);
+        while (nGramTokenizer.hasMoreElements())
+        {
+            String candidate = (String) nGramTokenizer.nextElement();
+            candidate = candidate.toLowerCase().trim();
+            String[] words = candidate.split(" ");
+            boolean hasStopWord = false;
+            for (int i = 0; i < words.length ; i++)
+            {
+                if (STOP_WORDS.contains(words[i]))
+                {
+                    hasStopWord = true;
+                    break;
+                }
+
+            }
+            if (!hasStopWord)
+            {
+                System.out.println((String)nGramTokenizer.nextElement());
+            }
+        }
+    }
+
+    private static class CandidateKeywordScore
     {
         String m_word;
         double m_score;
@@ -253,6 +337,16 @@ public class Rake
             return Objects.hashCode(m_word, m_score);
         }
 
+        public void setScore(double score)
+        {
+            m_score = score;
+        }
+
+        public void addToScore(double score)
+        {
+            m_score += score;
+        }
+
         public String getWord()
         {
             return m_word;
@@ -273,7 +367,7 @@ public class Rake
         }
     }
 
-    private class CandidateKeywordScoreSorter implements Comparator<CandidateKeywordScore>
+    private static class CandidateKeywordScoreSorter implements Comparator<CandidateKeywordScore>
     {
 
         @Override
@@ -305,5 +399,35 @@ public class Rake
                 return 0;
             }
         }
+    }
+
+    public List<String> getTestReviews()
+    {
+        CSVParser parser = null;
+        File reviewFileHandle = new File("/home/rjanardhana/tmp/testReviews.txt");
+        List<String> reviews = Lists.newArrayList();
+        try
+        {
+            parser = CSVParser.parse(reviewFileHandle, StandardCharsets.UTF_8, CSVFormat.DEFAULT.withDelimiter('|').withHeader());
+            for (CSVRecord record : parser)
+            {
+                String reviewText = _trim(record.get("reviewtext"));
+                reviews.add(reviewText);
+            }
+            parser.close();
+        } catch (IOException e)
+        {
+            e.printStackTrace();
+        }
+        catch (Exception e)
+        {
+            e.printStackTrace();
+        }
+        return reviews;
+    }
+
+    private String _trim(String str)
+    {
+        return str != null ? str.trim().replaceAll(" +", " ") : str;
     }
 }
